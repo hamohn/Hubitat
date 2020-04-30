@@ -36,23 +36,16 @@
 
  preferences {
      parameterMap().each {
-         input (
-             title: "${it.num}. ${it.title}",
-             description: it.descr,
-             type: "paragraph",
-             element: "paragraph"
-         )
-
-         input (
-             name: it.key,
-             title: null,
-             description: "Default: $it.def" ,
-             type: it.type,
-             options: it.options,
-             range: (it.min != null && it.max != null) ? "${it.min}..${it.max}" : null,
-             defaultValue: it.def,
-             required: false
-         )
+        input (
+            name: it.key,
+            title: "${it.num}. ${it.title}",
+            description: "$it.descr. Default: $it.def" ,
+            type: it.type,
+            options: it.options,
+            range: (it.min != null && it.max != null) ? "${it.min}..${it.max}" : null,
+            defaultValue: it.def,
+            required: false
+        )
      }
 
      input ( name: "logging", title: "Logging", type: "boolean", required: false )
@@ -64,9 +57,9 @@ metadata {
     definition (name: "Heatit Z-TRM2fx", namespace: "heatit", author: "hamohn") {
         capability "Actuator"
         capability "Temperature Measurement"
-        capability "Thermostat"
+        //capability "Thermostat"
         capability "Thermostat Mode"
-        capability "Thermostat Heating Setpoint"
+        //capability "Thermostat Heating Setpoint"
         capability "Thermostat Setpoint"
         capability "Configuration"
         capability "Polling"
@@ -577,21 +570,23 @@ def parse(String description) {
 
 private syncStart() {
     boolean syncNeeded = false
+    def toSync = []
     parameterMap().each {
         if(settings."$it.key" != null) {
             if (state."$it.key" == null)
             {
                 state."$it.key" = [value: null, state: "synced", scale: null]
             }
-            if (state."$it.key".value != settings."$it.key" || state."$it.key".state in ["notSynced","inProgress"]) {
+            if (state."$it.key".value != settings."$it.key" || state."$it.key".state in ["notSynced", "inProgress"]) {
                 state."$it.key".value = settings."$it.key"
                 state."$it.key".state = "notSynced"
                 syncNeeded = true
+                toSync << it.key
             }
         }
     }
     if ( syncNeeded ) {
-        logging("${device.displayName} - starting sync.", "info")
+        logging("${device.displayName} - starting sync. Items: $toSync", "info")
         multiStatusEvent("Sync in progress.", true, true)
         syncNext()
     }
@@ -600,49 +595,83 @@ private syncStart() {
 private syncNext() {
     logging("${device.displayName} - Executing syncNext()","info")
     def cmds = []
-    for ( param in parameterMap() ) {
-        if ( state."$param.key"?.value != null && state."$param.key"?.state in ["notSynced","inProgress"] ) {
+    for (param in parameterMap())
+    {
+        def keyState = state."$param.key"
+        if (keyState == null)
+            continue
+
+        if (keyState.value != null && keyState.state in ["notSynced", "inProgress"])
+        {
             multiStatusEvent("Sync in progress. (param: ${param.num})", true)
-            state."$param.key"?.state = "inProgress"
-            state."$param.key"?.scale = param.scale
-            cmds << response(encap(zwave.configurationV2.configurationSet(configurationValue: intToParam(state."$param.key".value, param.size, param.scale), parameterNumber: param.num, size: param.size)))
+            keyState.state = "inProgress"
+            keyState.scale = param.scale
+            def value = keyState.value as double
+            logging("$param.key - value=${value}", "info")
+
+            cmds << response(encap(zwave.configurationV2.configurationSet(configurationValue: numberToParam(value, param.size, param.scale), parameterNumber: param.num, size: param.size)))
             cmds << response(encap(zwave.configurationV2.configurationGet(parameterNumber: param.num)))
 
             if (param.num == 2)
             {
-                cmds << response(encap(zwave.associationV2.associationRemove(groupingIdentifier:3, nodeId:[zwaveHubNodeId])))
-                cmds << response(encap(zwave.associationV2.associationRemove(groupingIdentifier:4, nodeId:[zwaveHubNodeId])))
-                cmds << response(encap(zwave.associationV2.associationRemove(groupingIdentifier:5, nodeId:[zwaveHubNodeId])))
-                cmds << zwave.multiChannelAssociationV2.multiChannelAssociationRemove(groupingIdentifier: 3, nodeId:[zwaveHubNodeId])
-                cmds << zwave.multiChannelAssociationV2.multiChannelAssociationRemove(groupingIdentifier: 4, nodeId:[zwaveHubNodeId])
-                cmds << zwave.multiChannelAssociationV2.multiChannelAssociationRemove(groupingIdentifier: 5, nodeId:[zwaveHubNodeId])
+                cmds << response(encap(zwave.associationV2.            associationRemove            (groupingIdentifier: 3, nodeId:[zwaveHubNodeId])))
+                cmds << response(encap(zwave.associationV2.            associationRemove            (groupingIdentifier: 4, nodeId:[zwaveHubNodeId])))
+                cmds << response(encap(zwave.associationV2.            associationRemove            (groupingIdentifier: 5, nodeId:[zwaveHubNodeId])))
+                cmds << response(encap(zwave.multiChannelAssociationV2.multiChannelAssociationRemove(groupingIdentifier: 3, nodeId:[zwaveHubNodeId])))
+                cmds << response(encap(zwave.multiChannelAssociationV2.multiChannelAssociationRemove(groupingIdentifier: 4, nodeId:[zwaveHubNodeId])))
+                cmds << response(encap(zwave.multiChannelAssociationV2.multiChannelAssociationRemove(groupingIdentifier: 5, nodeId:[zwaveHubNodeId])))
 
                 def sensor = 3 as long // build in sensor
-                if (state."$param.key".value == 0 || state."$param.key".value == 5)
+                if (keyState.value == 0 || keyState.value == 5)
                 {
                     sensor = 5 // floor sensor
                 }
-                else if (state."$param.key".value == 3)
+                else if (keyState.value == 3)
                 {
                     sensor = 4 // external sensor
                 }
                 cmds << response(encap(zwave.multiChannelAssociationV2.multiChannelAssociationSet(groupingIdentifier: sensor, nodeId:[zwaveHubNodeId])))
                 cmds << response(encap(zwave.associationV2.associationSet(groupingIdentifier: sensor, nodeId:[zwaveHubNodeId])))
-
             }
             break
         }
     }
-    if (cmds) {
+
+    if (cmds)
+    {
         runIn(10, "syncCheck")
-        log.debug "cmds!"
-        sendHubCommand(cmds,1000)
-    } else {
+        logging ("cmds!", "debug")
+        cmds.each
+        {
+            //sendHubCommand(it, 1000)
+            sendHubCommand(it)
+        }
+    }
+    else
+    {
         runIn(1, "syncCheck")
     }
-}
+} // end syncNext()
 
-private syncCheck() {
+
+
+private List numberToParam(double value, Integer size = 1, Integer scale = 1)
+{
+    def scaled = (value * scale) as long
+    logging("numberToParam - value=$value, size=$size, scale=$scale, scaled=$scaled", "info")
+    def result = []
+    size.times {
+        result = result.plus(0, (scaled & 0xFF) as Short)
+        scaled = (scaled >> 8)
+    }
+    logging("numberToParam - returning $result", "info")
+    return result
+} // end numberToParam()
+
+
+
+private syncCheck()
+{
     logging("${device.displayName} - Executing syncCheck()","info")
     def failed = []
     def incorrect = []
@@ -652,28 +681,30 @@ private syncCheck() {
             incorrect << it
         } else if ( state."$it.key"?.state == "failed" ) {
             failed << it
-        } else if ( state."$it.key"?.state in ["inProgress","notSynced"] ) {
+        } else if ( state."$it.key"?.state in ["inProgress", "notSynced"] ) {
             notSynced << it
         }
     }
     if (failed) {
-        logging("${device.displayName} - Sync failed! Check parameter: ${failed[0].num}","info")
+        logging("${device.displayName} - Sync failed! Check parameter: ${failed[0].num}", "info")
         sendEvent(name: "syncStatus", value: "failed")
         multiStatusEvent("Sync failed! Check parameter: ${failed[0].num}", true, true)
     } else if (incorrect) {
-        logging("${device.displayName} - Sync mismatch! Check parameter: ${incorrect[0].num}","info")
+        logging("${device.displayName} - Sync mismatch! Check parameter: ${incorrect[0].num}", "info")
         sendEvent(name: "syncStatus", value: "incomplete")
         multiStatusEvent("Sync mismatch! Check parameter: ${incorrect[0].num}", true, true)
     } else if (notSynced) {
-        logging("${device.displayName} - Sync incomplete!","info")
+        logging("${device.displayName} - Sync incomplete!", "info")
         sendEvent(name: "syncStatus", value: "incomplete")
         multiStatusEvent("Sync incomplete! Open settings and tap Done to try again.", true, true)
     } else {
-        logging("${device.displayName} - Sync Complete","info")
+        logging("${device.displayName} - Sync Complete", "info")
         sendEvent(name: "syncStatus", value: "synced")
         multiStatusEvent("Sync OK.", true, true)
     }
-}
+} // end syncCheck()
+
+
 
 private multiStatusEvent(String statusValue, boolean force = false, boolean display = false) {
     if (!device.currentValue("multiStatus")?.contains("Sync") || device.currentValue("multiStatus") == "Sync OK." || force) {
@@ -690,7 +721,7 @@ def zwaveEvent(hubitat.zwave.commands.configurationv2.ConfigurationReport cmd) {
         scale = state."$paramKey".scale
     }
     def scaledValue = value * scale as long
-    logging("${device.displayName} - Parameter ${paramKey} value is ${cmd.scaledConfigurationValue} expected " + scaledValue , "info")
+    logging("${device.displayName} - Parameter ${paramKey} value is ${cmd.scaledConfigurationValue} expected $scaledValue", "info")
     state."$paramKey".state = (scaledValue == cmd.scaledConfigurationValue) ? "synced" : "incorrect"
     syncNext()
 }
@@ -764,7 +795,7 @@ private encap(hubitat.zwave.Command cmd) {
     //} else if (zwaveInfo.cc.contains("56")){
     //    crcEncap(cmd)
     //} else {
-        logging("${device.displayName} - no encapsulation supported for command: $cmd","info")
+        //logging("${device.displayName} - no encapsulation supported for command: $cmd","info")
         cmd.format()
     //}
 }
@@ -777,15 +808,7 @@ private encapSequence(cmds, Integer delay, Integer ep) {
     delayBetween(cmds.collect{ encap(it, ep) }, delay)
 }
 
-private List intToParam(Long value, Integer size = 1, Integer scale = 1) {
-    value = value * scale
-    def result = []
-    size.times {
-        result = result.plus(0, (value & 0xFF) as Short)
-        value = (value >> 8)
-    }
-    return result
-}
+
 
 private secure(hubitat.zwave.Command cmd) {
     zwave.securityV1.securityMessageEncapsulation().encapsulate(cmd).format()
@@ -809,17 +832,36 @@ private isSecured() {
 }
 
 
+// From HubitatPublic/examples/drivers/basicZWaveTool.groovy - not in use (yet)
+private secureCmd(cmd) {
+    if (getDataValue("zwaveSecurePairingComplete") == "true") {
+        return zwave.securityV1.securityMessageEncapsulation().encapsulate(cmd).format()
+    } else {
+        return cmd.format()
+    }
+}
+
+
 private Map cmdVersions() {
     [0x85: 2, 0x59: 1, 0x8E: 2, 0x86: 3, 0x70: 2, 0x72: 2, 0x5E: 2, 0x5A: 1, 0x73: 1, 0x7A: 4, 0x60: 3, 0x20: 1, 0x6C: 1, 0x31: 5, 0x43: 2, 0x40: 2, 0x98: 1, 0x9F: 1, 0x25: 1]
 }
 
 private parameterMap() {[
+    [key: "operationMode", num: 1, size: 1, type: "enum", options: [
+        0: "Off. (Default)",
+        1: "Heating mode",
+        2: "Cooling mode (not implemented)",
+        11: "Energy saving heating mode"
+    ], def: "1", title: "Sensor Mode",
+     descr: "This parameter determines the påeration mode of the thermostat", scale: 1],
+
     [key: "sensorMode", num: 2, size: 1, type: "enum", options: [
         0: "F - Floor sensor mode. (Default)",
         3: "A2 - External room sensor mode",
         4: "A2F - External sensor with floor limitation"
     ], def: "1", title: "Sensor Mode",
      descr: "This parameter determines what kind of sensor is used to regulate the power", scale: 1],
+
     [key: "floorSensorType", num: 3, size: 1, type: "enum", options: [
         0: "10k ntc",
         1: "12k ntc",
@@ -830,79 +872,63 @@ private parameterMap() {[
     ], def: "0", title: "Floor Sensor Type",
      descr: "This parameter determines floor sensor type, 10k ntc is default", scale: 1],
 
-    [key: "TemperatureControlCysteresis", num: 4, size: 1, type: "number", def:0.5, min: 0.3, max: 3, title: "Hysteresis temp (0.3°..3° in 0.1 steps: 3-30)",
+    [key: "TemperatureControlHysteresis", num: 4, size: 1, type: "number", def:0.5, min: 0.3, max: 3, title: "Hysteresis temp (0.3°..3°)",
      descr: "This parameter determines the control hysteresis", scale: 10],
 
-    [key: "FLo", num: 5, size: 2, type: "number", def:5.0, min: 5.0, max: 40.0, title: "Minimum floor temperature(5°..40°) in 0.1 steps: 50-400)",
+    [key: "FLo", num: 5, size: 2, type: "number", def:5.0, min: 5.0, max: 40.0, title: "Minimum floor temperature(5°..40°)",
      descr: "Minimum floor temperature", scale: 10],
 
-    [key: "FHi", num: 6, size: 2, type: "number", def:40.0, min: 5.0, max: 40.0, title: "Maximum floor temperature (5°..40° in 0.1 steps: 50-400)",
+    [key: "FHi", num: 6, size: 2, type: "number", def:40.0, min: 5.0, max: 40.0, title: "Maximum floor temperature (5°..40°)",
      descr: "Maxmum floor temperature", scale: 10],
 
-    [key: "ALo", num: 7, size: 2, type: "number", def:5.0, min: 5.0, max: 40.0, title: "Minimum air temperature (5°..40° in 0.1 steps: 50-400)",
+    [key: "ALo", num: 7, size: 2, type: "number", def:5.0, min: 5.0, max: 40.0, title: "Minimum air temperature (5°..40°)",
      descr: "Minimum air temperature", scale: 10],
 
-    [key: "AHi", num: 8, size: 2, type: "number", def:40.0, min: 5.0, max: 40.0, title: "Maximum air temperature (5°..40° in 0.1 steps: 50-400)",
+    [key: "AHi", num: 8, size: 2, type: "number", def:40.0, min: 5.0, max: 40.0, title: "Maximum air temperature (5°..40°)",
      descr: "Maxmum air temperature", scale: 10],
 
-    [key: "CO", num: 9, size: 2, type: "number", def:21.0, min: 5.0, max: 40.0, title: "Heating mode setpoint (5°..40° in 0.1 steps: 50-400)",
-     descr: "Maxmum air temperature", scale: 10],
+    [key: "CO", num: 9, size: 2, type: "number", def:21.0, min: 5.0, max: 40.0, title: "Heating mode setpoint (5°..40°)",
+     descr: "Heating mode setpoint", scale: 10],
 
-    [key: "ECO", num: 10, size: 2, type: "number", def:18.0, min: 5.0, max: 40.0, title: "Energy saving mode setpoint (5°..40° in 0.1 steps: 50-400)",
-     descr: "Maxmum air temperature", scale: 10],
+    [key: "ECO", num: 10, size: 2, type: "number", def:18.0, min: 5.0, max: 40.0, title: "Energy saving mode setpoint (5°..40°)",
+     descr: "Energy saving mode setpoint", scale: 10],
 
-    [key: "COOL", num: 11, size: 2, type: "number", def:21.0, min: 5.0, max: 40.0, title: "Cooling setpoint (5°..40° in 0.1 steps: 50-400)",
-     descr: "Maxmum air temperature", scale: 10],
+    [key: "COOL", num: 11, size: 2, type: "number", def:21.0, min: 5.0, max: 40.0, title: "Cooling setpoint (5°..40°)",
+     descr: "Cooling setpoint", scale: 10],
 
-    [key: "FloorSensorCalibration", num: 12, size: 1, type: "number", def:0.0, min: -4.0, max: 4.0, title: "Floor sensor calibration (-4°..4° in 0.1 steps: -40-40)",
-     descr: "Floor sensor calibration in deg. C (x10) (To set a negative value, use 255 and subtract the desired value)", scale: 10],
+    [key: "FloorSensorCalibration", num: 12, size: 1, type: "number", def:0.0, min: -4.0, max: 4.0, title: "Floor sensor calibration (-4°..4°)",
+     descr: "Floor sensor calibration in deg. C (To set a negative value, use 255 and subtract the desired value)", scale: 10],
 
-    //[key: "PLo", num: 9, size: 1, type: "number", def:0, min: 0, max: 9, title: "FP mode P setting",
-    // descr: "FP mode P setting (0..9)", scale: 1],
+    [key: "ExternalSensorCalibration", num: 13, size: 1, type: "number", def:0.0, min: -4.0, max: 4.0, title: "External sensor calibration (-4°..4°)",
+     descr: "External sensor calibration in deg. C (To set a negative value, use 255 and subtract the desired value)", scale: 10],
 
-    //[key: "P", num: 12, size: 1, type: "number", def:2, min: 0, max: 10, title: "P setting",
-    // descr: "P Setting (0..10)", scale: 1],
-
-    [key: "COOL", num: 13, size: 2, type: "number", def:21.0, min: 5.0, max: 40.0, title: "Cooling temperature (5°..40° in 0.1 steps: 50-400)",
-     descr: "Cooling temperature", scale: 10],
-
-    [key: "RoomSensorCalibration", num: 14, size: 1, type: "number", def:0.0, min: -4.0, max: 4.0, title: "Room sensor calibration (-4°..4°)",
-     descr: "Room sensor calibration in deg. C (x10)", scale: 10],
-
-    //[key: "FloorSensorCalibration", num: 15, size: 1, type: "number", def:0.0, min: -4.0, max: 4.0, title: "Floor sensor calibration (-4°..4°)",
-    // descr: "Floor sensor calibration in deg. C (x10)", scale: 10],
-
-     [key: "ExtSensorCalibration", num: 16, size: 1, type: "number", def:0.0, min: -4.0, max: 4.0, title: "External sensor calibration (-4°..4°)",
-     descr: "External sensor calibration in deg. C (x10)", scale: 10],
-
-    [key: "tempDisplay", num: 17, size: 1, type: "enum", options: [
+    [key: "tempDisplay", num: 14, size: 1, type: "enum", options: [
         0: "Display setpoint temperature (Default)",
         1: "Display measured temperature"
     ], def: "0", title: "Temperature Display",
      descr: "Selects which temperature is shown in the display", scale: 1],
 
-    [key: "DimBtnBright", num: 18, size: 1, type: "number", def:50, min: 0, max: 100, title: "Button brightness – dimmed state (%)",
+    [key: "DimBtnBright", num: 15, size: 1, type: "number", def:50, min: 0, max: 100, title: "Button brightness – dimmed state (%)",
      descr: "Configure the brightness of the buttons, in dimmed state", scale: 1],
 
-    [key: "ActBtnBright", num: 19, size: 1, type: "number", def:100, min: 0, max: 100, title: "Button brightness – active state (%)",
+    [key: "ActBtnBright", num: 16, size: 1, type: "number", def:100, min: 0, max: 100, title: "Button brightness – active state (%)",
      descr: "Configure the brightness of the buttons, in active state", scale: 1],
 
-    [key: "DimDplyBright", num: 20, size: 1, type: "number", def:50, min: 0, max: 100, title: "Display brightness – dimmed state (%)",
+    [key: "DimDplyBright", num: 17, size: 1, type: "number", def:50, min: 0, max: 100, title: "Display brightness – dimmed state (%)",
      descr: "Configure the brightness of the display, in dimmed state", scale: 1],
 
-    [key: "ActDplyBright", num: 21, size: 1, type: "number", def:100, min: 0, max: 100, title: "Display brightness – active state (%)",
+    [key: "ActDplyBright", num: 18, size: 1, type: "number", def:100, min: 0, max: 100, title: "Display brightness – active state (%)",
      descr: "Configure the brightness of the display, in active state", scale: 1],
 
-    [key: "TmpReportIntvl", num: 22, size: 2, type: "number", def:60, min: 0, max: 32767, title: "Temperature report interval (seconds)",
+    [key: "TmpReportIntvl", num: 19, size: 2, type: "number", def:60, min: 0, max: 32767, title: "Temperature report interval (seconds)",
      descr: "Time interval between consecutive temperature reports. Temperature reports can be also sent as a result of polling", scale: 1],
 
-    [key: "TempReportHyst", num: 23, size: 1, type: "number", def:1.0, min: 0.1, max: 10.0, title: "Temperature report hysteresis (0.1°..10°)",
+    [key: "TempReportHyst", num: 20, size: 1, type: "number", def:1.0, min: 0.1, max: 10.0, title: "Temperature report hysteresis (0.1°..10°)",
      descr: "The temperature report will be sent if there is a difference in temperature value from the previous value reported, defined in this parameter (hysteresis). Temperature reports can be also sent as a result of polling", scale: 10],
 
-    [key: "MeterReportInterval", num: 24, size: 2, type: "number", def:60, min: 0, max: 32767, title: "Meter report interval (seconds)",
+    [key: "MeterReportInterval", num: 21, size: 2, type: "number", def:60, min: 0, max: 32767, title: "Meter report interval (seconds)",
      descr: "Time interval between consecutive meter reports. Meter reports can be also sent as a result of polling.", scale: 1],
 
-    [key: "MeterReportDeltaValue", num: 25, size: 1, type: "number", def:10, min: 0, max: 255, title: "Meter report delta value",
-     descr: "Delta value in kWh between consecutive meter reports. Meter reports can be also sent as a result of polling.", scale: 1],
-
+    [key: "MeterReportDeltaValue", num: 22, size: 1, type: "number", def:10, min: 0, max: 127, title: "Meter report delta value",
+     descr: "Delta value in kWh between consecutive meter reports. Meter reports can be also sent as a result of polling.", scale: 10],
 ]}
