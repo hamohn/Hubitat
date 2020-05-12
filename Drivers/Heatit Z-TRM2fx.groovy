@@ -181,6 +181,7 @@ def zwaveEvent(hubitat.zwave.commands.thermostatsetpointv2.ThermostatSetpointRep
 }
 
 
+
 def zwaveEvent(hubitat.zwave.commands.meterv3.MeterReport cmd)
 {
  //   log.debug "${device.displayName} - MeterReport received, value: ${cmd.scaledMeterValue} scale: ${cmd.scale}"
@@ -198,9 +199,10 @@ def zwaveEvent(hubitat.zwave.commands.meterv3.MeterReport cmd)
 }
 
 
+
 def zwaveEvent(hubitat.zwave.commands.sensormultilevelv5.SensorMultilevelReport cmd)
 {
-    log.debug("Temperature is: $cmd.scaledSensorValue °C")
+    //log.debug("Temperature is: $cmd.scaledSensorValue °C")
     sendEvent(name: "temperature", value: cmd.scaledSensorValue)
 }
 
@@ -351,12 +353,13 @@ def setHeatingSetpoint(Double degrees, Integer delay = 30000) {
     encapSequence(cmds)
 }
 
-def quickSetecoHeat(degrees) {
-
+def quickSetecoHeat(degrees)
+{
     setecoHeatingSetpoint(degrees, 1000)
 }
 
-def setecoHeatingSetpoint(degrees, delay = 30000) {
+def setecoHeatingSetpoint(degrees, delay = 30000)
+{
     setecoHeatingSetpoint(degrees.toDouble(), delay)
 }
 
@@ -566,18 +569,25 @@ def parse(String description) {
             zwaveEvent(cmd)
         }
     }
-}
+} // end parse()
 
-private syncStart() {
+
+
+private syncStart()
+{
     boolean syncNeeded = false
     def toSync = []
-    parameterMap().each {
-        if(settings."$it.key" != null) {
+    parameterMap().each
+    {
+        if (settings."$it.key" != null)
+        {
             if (state."$it.key" == null)
             {
                 state."$it.key" = [value: null, state: "synced", scale: null]
             }
-            if (state."$it.key".value != settings."$it.key" || state."$it.key".state in ["notSynced", "inProgress"]) {
+
+            if (state."$it.key".value != settings."$it.key" || state."$it.key".state in ["notSynced", "inProgress"])
+            {
                 state."$it.key".value = settings."$it.key"
                 state."$it.key".state = "notSynced"
                 syncNeeded = true
@@ -585,29 +595,33 @@ private syncStart() {
             }
         }
     }
-    if ( syncNeeded ) {
+
+    // If state differs from settings, update state by calling syncNext()
+    if (syncNeeded)
+    {
         logging("${device.displayName} - starting sync. Items: $toSync", "info")
         multiStatusEvent("Sync in progress.", true, true)
         syncNext()
     }
-}
+} // end syncStart()
 
-private syncNext() {
-    logging("${device.displayName} - Executing syncNext()","info")
+
+
+private syncNext()
+{
+    logging("${device.displayName} - Executing syncNext()", "info")
     def cmds = []
     for (param in parameterMap())
     {
         def keyState = state."$param.key"
-        if (keyState == null)
-            continue
 
-        if (keyState.value != null && keyState.state in ["notSynced", "inProgress"])
+        if (keyState != null && keyState.value != null && keyState.state in ["notSynced", "inProgress"])
         {
             multiStatusEvent("Sync in progress. (param: ${param.num})", true)
             keyState.state = "inProgress"
             keyState.scale = param.scale
             def value = keyState.value as double
-            logging("$param.key - value=${value}", "info")
+            logging("syncNext: Updating $param.key - value=${value} (parameter number $param.num) since state is $keyState.state", "info")
 
             cmds << response(encap(zwave.configurationV2.configurationSet(configurationValue: numberToParam(value, param.size, param.scale), parameterNumber: param.num, size: param.size)))
             cmds << response(encap(zwave.configurationV2.configurationGet(parameterNumber: param.num)))
@@ -621,15 +635,16 @@ private syncNext() {
                 cmds << response(encap(zwave.multiChannelAssociationV2.multiChannelAssociationRemove(groupingIdentifier: 4, nodeId:[zwaveHubNodeId])))
                 cmds << response(encap(zwave.multiChannelAssociationV2.multiChannelAssociationRemove(groupingIdentifier: 5, nodeId:[zwaveHubNodeId])))
 
-                def sensor = 3 as long // build in sensor
-                if (keyState.value == 0 || keyState.value == 5)
-                {
-                    sensor = 5 // floor sensor
-                }
-                else if (keyState.value == 3)
-                {
-                    sensor = 4 // external sensor
-                }
+                def sensor = keyState.value
+                // def sensor = 3 as long // build in sensor
+                // if (keyState.value == 0 || keyState.value == 5)
+                // {
+                //     sensor = 5 // floor sensor
+                // }
+                // else if (keyState.value == 3)
+                // {
+                //     sensor = 4 // external sensor
+                // }
                 cmds << response(encap(zwave.multiChannelAssociationV2.multiChannelAssociationSet(groupingIdentifier: sensor, nodeId:[zwaveHubNodeId])))
                 cmds << response(encap(zwave.associationV2.associationSet(groupingIdentifier: sensor, nodeId:[zwaveHubNodeId])))
             }
@@ -640,10 +655,11 @@ private syncNext() {
     if (cmds)
     {
         runIn(10, "syncCheck")
-        logging ("cmds!", "debug")
+        //logging ("syncNext: cmds!", "debug")
         cmds.each
         {
             //sendHubCommand(it, 1000)
+            logging("syncNext: Sending command $it", "info")
             sendHubCommand(it)
         }
     }
@@ -658,13 +674,13 @@ private syncNext() {
 private List numberToParam(double value, Integer size = 1, Integer scale = 1)
 {
     def scaled = (value * scale) as long
-    logging("numberToParam - value=$value, size=$size, scale=$scale, scaled=$scaled", "info")
+    //logging("numberToParam - value=$value, size=$size, scale=$scale, scaled=$scaled", "info")
     def result = []
     size.times {
         result = result.plus(0, (scaled & 0xFF) as Short)
         scaled = (scaled >> 8)
     }
-    logging("numberToParam - returning $result", "info")
+    //logging("numberToParam - returning $result", "info")
     return result
 } // end numberToParam()
 
@@ -676,7 +692,9 @@ private syncCheck()
     def failed = []
     def incorrect = []
     def notSynced = []
-    parameterMap().each {
+
+    parameterMap().each
+    {
         if (state."$it.key"?.state == "incorrect" ) {
             incorrect << it
         } else if ( state."$it.key"?.state == "failed" ) {
@@ -685,6 +703,7 @@ private syncCheck()
             notSynced << it
         }
     }
+
     if (failed) {
         logging("${device.displayName} - Sync failed! Check parameter: ${failed[0].num}", "info")
         sendEvent(name: "syncStatus", value: "failed")
@@ -712,19 +731,29 @@ private multiStatusEvent(String statusValue, boolean force = false, boolean disp
     }
 }
 
-def zwaveEvent(hubitat.zwave.commands.configurationv2.ConfigurationReport cmd) {
+
+
+def zwaveEvent(hubitat.zwave.commands.configurationv2.ConfigurationReport cmd)
+{
+    logging("${device.displayName} - Received command $cmd)", "info")
     def paramKey = parameterMap().find( {it.num == cmd.parameterNumber } ).key
-    def value = state."$paramKey".value as double
+    def keyState = state."$paramKey"
+    if (keyState == null)
+        return
+
+    def value = keyState.value as double
     def scale = 1 as long
-    if (state."$paramKey".scale)
+    if (keyState.scale)
     {
-        scale = state."$paramKey".scale
+        scale = keyState.scale
     }
     def scaledValue = value * scale as long
-    logging("${device.displayName} - Parameter ${paramKey} value is ${cmd.scaledConfigurationValue} expected $scaledValue", "info")
-    state."$paramKey".state = (scaledValue == cmd.scaledConfigurationValue) ? "synced" : "incorrect"
+    keyState.state = (scaledValue == cmd.scaledConfigurationValue) ? "synced" : "incorrect"
+    logging("${device.displayName} - Parameter ${paramKey} value is ${cmd.scaledConfigurationValue} expected $scaledValue (state became $keyState.state)", "info")
     syncNext()
-}
+} // end zwaveEvent()
+
+
 
 def zwaveEvent(hubitat.zwave.Command cmd) {
     // This will capture any commands not handled by other instances of zwaveEvent
@@ -853,7 +882,7 @@ private parameterMap() {[
         2: "Cooling mode (not implemented)",
         11: "Energy saving heating mode"
     ], def: "1", title: "Sensor Mode",
-     descr: "This parameter determines the påeration mode of the thermostat", scale: 1],
+     descr: "This parameter determines the operation mode of the thermostat", scale: 1],
 
     [key: "sensorMode", num: 2, size: 1, type: "enum", options: [
         0: "F - Floor sensor mode. (Default)",
