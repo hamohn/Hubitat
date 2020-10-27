@@ -57,9 +57,9 @@ metadata {
     definition (name: "Heatit Z-TRM2fx", namespace: "heatit", author: "hamohn") {
         capability "Actuator"
         capability "Temperature Measurement"
-        //capability "Thermostat"
+        capability "Thermostat"
         capability "Thermostat Mode"
-        //capability "Thermostat Heating Setpoint"
+        capability "Thermostat Heating Setpoint"
         capability "Thermostat Setpoint"
         capability "Configuration"
         capability "Polling"
@@ -71,12 +71,12 @@ metadata {
 
         command "switchMode"
         command "energySaveHeat"
-        command "quickSetHeat"
-        command "quickSetecoHeat"
-        command "pressUp"
-        command "pressDown"
+        command "quickSetHeatingSetpoint", ["number"]
+        command "quickSetEcoHeat",         ["number"]
+        // command "pressUp"    // Don't work
+        // command "pressDown"  // Don't work
 
-    fingerprint mfr: "019B",  deviceId: "0x0806", prod: "0003", model: "0202", inClusters: "0x5E, 0x43, 0x31, 0x86, 0x40, 0x59, 0x85, 0x73, 0x72, 0x5A, 0x70"
+        fingerprint deviceId: "0x0806", mfr: "019B", prod: "0003", model: "0202", inClusters: "0x5E, 0x85, 0x59, 0x8E, 0x60, 0x55, 0x86, 0x72, 0x5A, 0x73, 0x98, 0x9F, 0x6C, 0x70, 0x7A, 0x43, 0x40, 0x32"
     }
 
 }
@@ -150,10 +150,12 @@ def zwaveEvent(hubitat.zwave.commands.multichannelv3.MultiChannelEndPointReport 
 
 def zwaveEvent(hubitat.zwave.commands.multichannelv3.MultiChannelCmdEncap cmd) {
     log.debug "${device.displayName} - MultiChannelCmdEncap ${cmd}"
-    def encapsulatedCommand = cmd.encapsulatedCommand(cmdVersions())
+
+    def encapsulatedCommand = cmd.encapsulatedCommand(commandClassCapabilities)
+    //def encapsulatedCommand = cmd.encapsulatedCommand(cmdVersions())
     if (encapsulatedCommand) {
-        log.debug "${device.displayName} - Parsed MultiChannelCmdEncap ${encapsulatedCommand}"
-        zwaveEvent(encapsulatedCommand, cmd.sourceEndPoint as Integer)
+        log.debug "${device.displayName} - Got encapsulated ${encapsulatedCommand}"
+        zwaveEvent(encapsulatedCommand/*, cmd.sourceEndPoint as Integer*/)
     } else {
         log.warn "Unable to extract MultiChannel command from $cmd"
     }
@@ -163,21 +165,21 @@ def zwaveEvent(hubitat.zwave.commands.multichannelv3.MultiChannelCmdEncap cmd) {
 def zwaveEvent(hubitat.zwave.commands.thermostatsetpointv2.ThermostatSetpointReport cmd)
 {
     log.debug "${device.displayName} - ThermostatSetpoinReport received, value: ${cmd.scaledValue} scale: ${cmd.scale}"
-
-       if (cmd.setpointType == 1){
+    if (cmd.setpointType == 1)
+    {
         def heating = cmd.scaledValue
         sendEvent(name: "heatingSetpoint", value: heating)
     }
-    if (cmd.setpointType == 11){
+    if (cmd.setpointType == 11)
+    {
         def energyHeating = cmd.scaledValue
         sendEvent(name: "ecoHeatingSetpoint", value: energyHeating)
         state.ecoheatingSetpoint = energyHeating
     }
     // So we can respond with same format
-    state.size = cmd.size
-    state.scale = cmd.scale
+    state.size      = cmd.size
+    state.scale     = cmd.scale
     state.precision = cmd.precision
-    //map
 }
 
 
@@ -202,9 +204,10 @@ def zwaveEvent(hubitat.zwave.commands.meterv3.MeterReport cmd)
 
 def zwaveEvent(hubitat.zwave.commands.sensormultilevelv5.SensorMultilevelReport cmd)
 {
-    //log.debug("Temperature is: $cmd.scaledSensorValue °C")
+    log.debug("${device.displayName} - Temperature is: $cmd.scaledSensorValue °C")
     sendEvent(name: "temperature", value: cmd.scaledSensorValue)
 }
+
 
 def zwaveEvent(hubitat.zwave.commands.thermostatoperatingstatev2.ThermostatOperatingStateReport cmd)
 {
@@ -230,6 +233,7 @@ def zwaveEvent(hubitat.zwave.commands.thermostatoperatingstatev2.ThermostatOpera
     map.name = "thermostatOperatingState"
     map
 }
+
 
 
 def zwaveEvent(hubitat.zwave.commands.thermostatmodev2.ThermostatModeReport cmd) {
@@ -283,12 +287,12 @@ def zwaveEvent(hubitat.zwave.commands.thermostatfanmodev3.ThermostatFanModeRepor
 def zwaveEvent(hubitat.zwave.commands.thermostatmodev2.ThermostatModeSupportedReport cmd) {
     log.debug("support reprt: $cmd")
     def supportedModes = ""
-    if(cmd.off) { supportedModes += "off " }
-    if(cmd.heat) { supportedModes += "heat " }
-    if(cmd.auxiliaryemergencyHeat) { supportedModes += "emergency heat " }
-    if(cmd.cool) { supportedModes += "cool " }
-    if(cmd.auto) { supportedModes += "auto " }
-    if(cmd.energySaveHeat) { supportedModes += "energySaveHeat " }
+    if (cmd.off)  { supportedModes += "off " }
+    if (cmd.heat) { supportedModes += "heat " }
+    //if(cmd.auxiliaryemergencyHeat) { supportedModes += "emergency heat " }
+    // if(cmd.cool) { supportedModes += "cool " }
+    // if(cmd.auto) { supportedModes += "auto " }
+    if (cmd.energySaveHeat) { supportedModes += "energySaveHeat " }
 
     state.supportedModes = supportedModes
 }
@@ -313,49 +317,59 @@ def pressUp(){
     log.debug(" pressed up currently $currTemp")
     def newTemp = currTemp + 0.5
     log.debug(" pressed up new temp is $newTemp")
-    quickSetHeat(newTemp)
+    quickSetHeatingSetpoint(newTemp)
 }
 
 def pressDown(){
     log.debug("pressed Down")
     def currTemp = device.latestValue("heatingSetpoint")
     def newTemp = currTemp - 0.5
-    quickSetHeat(newTemp)
+    quickSetHeatingSetpoint(newTemp)
 }
 
-def quickSetHeat(degrees) {
 
-    setHeatingSetpoint(degrees, 1000)
-}
 
-def setHeatingSetpoint(degrees, delay = 30000) {
-    setHeatingSetpoint(degrees.toDouble(), delay)
-}
+def quickSetHeatingSetpoint(degrees)
+{
+    setHeatingSetpoint(degrees, [delay: 1000])
+} // end quickSetHeatingSetpoint()
 
-def setHeatingSetpoint(Double degrees, Integer delay = 30000) {
-    log.trace "setHeatingSetpoint($degrees, $delay)"
-    def deviceScale = state.scale ?: 1
-    def deviceScaleString = deviceScale == 2 ? "C" : "F"
+
+
+def setHeatingSetpoint(degrees, options = [delay: 30000])
+{
+    log.trace "setHeatingSetpoint($degrees, $options) - scale=$state.scale, precision=$state.precision"
+    def cmds = []
+    cmds << zwave.thermostatSetpointV1.thermostatSetpointSet(setpointType: 1, scale: state.scale, precision: state.precision, scaledValue: degrees)
+    cmds << zwave.thermostatSetpointV1.thermostatSetpointGet(setpointType: 1)
+    encapSequence(cmds, options.delay)
+} // end setHeatingSetpoint()
+
+
+
+def quickSetEcoHeat(degrees)
+{
+    setecoHeatingSetpoint(degrees, 1000)
+} // end quickSetEcoHeat()
+
+
+
+def convertTemperatureIfNeeded(Double degrees)
+{
+    def deviceScale = state.scale ?: 0
+    def deviceScaleString = deviceScale == 0 ? "C" : "F"
     def locationScale = getTemperatureScale()
     def p = (state.precision == null) ? 1 : state.precision
 
     def convertedDegrees
-    //if (locationScale == "C" && deviceScaleString == "F") {
-    //	convertedDegrees = celsiusToFahrenheit(degrees)
-    //} else if (locationScale == "F" && deviceScaleString == "C") {
+    if (locationScale == "C" && deviceScaleString == "F") {
+    	convertedDegrees = celsiusToFahrenheit(degrees)
+    } else if (locationScale == "F" && deviceScaleString == "C") {
         convertedDegrees = fahrenheitToCelsius(degrees)
-    //} else {
+    } else {
         convertedDegrees = degrees
-    //}
-    def cmds = []
-    cmds << zwave.thermostatSetpointV1.thermostatSetpointSet(setpointType: 1, scale: deviceScale, precision: p, scaledValue: convertedDegrees)
-    cmds << zwave.thermostatSetpointV1.thermostatSetpointGet(setpointType: 1)
-    encapSequence(cmds)
-}
-
-def quickSetecoHeat(degrees)
-{
-    setecoHeatingSetpoint(degrees, 1000)
+    }
+    return convertTemperatureIfNeeded
 }
 
 def setecoHeatingSetpoint(degrees, delay = 30000)
@@ -365,22 +379,22 @@ def setecoHeatingSetpoint(degrees, delay = 30000)
 
 def setecoHeatingSetpoint(Double degrees, Integer delay = 30000) {
     log.trace "setecoHeatingSetpoint($degrees, $delay)"
-    def deviceScale = state.scale ?: 1
-    def deviceScaleString = deviceScale == 2 ? "C" : "F"
-    def locationScale = getTemperatureScale()
-    def p = (state.precision == null) ? 1 : state.precision
+    // def deviceScale = state.scale ?: 1
+    // def deviceScaleString = deviceScale == 2 ? "C" : "F"
+    // def locationScale = getTemperatureScale()
+    // def p = (state.precision == null) ? 1 : state.precision
 
-    def convertedDegrees
-    //if (locationScale == "C" && deviceScaleString == "F") {
-    //	convertedDegrees = celsiusToFahrenheit(degrees)
-    //} else if (locationScale == "F" && deviceScaleString == "C") {
-        convertedDegrees = fahrenheitToCelsius(degrees)
-    //} else {
-        convertedDegrees = degrees
-    //}
+    // def convertedDegrees
+    // if (locationScale == "C" && deviceScaleString == "F") {
+    // 	convertedDegrees = celsiusToFahrenheit(degrees)
+    // } else if (locationScale == "F" && deviceScaleString == "C") {
+    //     convertedDegrees = fahrenheitToCelsius(degrees)
+    // } else {
+    //     convertedDegrees = degrees
+    // }
 
     def cmds = []
-    cmds << zwave.thermostatSetpointV1.thermostatSetpointSet(setpointType: 11, scale: deviceScale, precision: p, scaledValue: convertedDegrees)
+    cmds << zwave.thermostatSetpointV1.thermostatSetpointSet(setpointType: 11, scale: 10, precision: 1, scaledValue: degrees)
     cmds << zwave.thermostatSetpointV1.thermostatSetpointGet(setpointType: 11)
     encapSequence(cmds, delay)
 }
@@ -390,11 +404,11 @@ def poll() {
     def cmds = []
     cmds << zwave.sensorMultilevelV5.sensorMultilevelGet(sensorType: 1)
     cmds << zwave.thermostatSetpointV2.thermostatSetpointGet(setpointType: 1)
-    cmds << zwave.thermostatSetpointV2.thermostatSetpointGet(setpointType: 2)
+    cmds << zwave.thermostatSetpointV2.thermostatSetpointGet(setpointType: 11)
     cmds << zwave.thermostatModeV2.thermostatModeGet()
  //   cmds << zwave.multiChannelAssociationV2.MultiChannelAssociationGroupingsGet()
 
-//    cmds << zwave.configurationV2.configurationGet(parameterNumber: 1)
+    cmds << zwave.configurationV2.configurationGet(parameterNumber: 1)
     cmds << zwave.configurationV2.configurationGet(parameterNumber: 2)
     cmds << zwave.configurationV2.configurationGet(parameterNumber: 3)
     cmds << zwave.configurationV2.configurationGet(parameterNumber: 4)
@@ -403,8 +417,8 @@ def poll() {
     cmds << zwave.configurationV2.configurationGet(parameterNumber: 7)
     cmds << zwave.configurationV2.configurationGet(parameterNumber: 8)
     cmds << zwave.configurationV2.configurationGet(parameterNumber: 9)
-//    cmds << zwave.configurationV2.configurationGet(parameterNumber: 10)
-//    cmds << zwave.configurationV2.configurationGet(parameterNumber: 11)
+    cmds << zwave.configurationV2.configurationGet(parameterNumber: 10)
+    cmds << zwave.configurationV2.configurationGet(parameterNumber: 11)
     cmds << zwave.configurationV2.configurationGet(parameterNumber: 12)
     cmds << zwave.configurationV2.configurationGet(parameterNumber: 13)
     cmds << zwave.configurationV2.configurationGet(parameterNumber: 14)
@@ -427,64 +441,67 @@ def configure()
    poll()
 }
 
-def modes() {
+// def modes() {
+//     ["off", "heat", "energySaveHeat"]
+// }
+
+def supportedThermostatModes() {
     ["off", "heat", "energySaveHeat"]
 }
 
+// def switchMode() {
 
-def switchMode() {
+//     def currentMode = device.currentState("thermostatMode")?.value
+//     if (!currentMode)
+//     {
+//         currentMode = "off"
+//     }
+//     log.debug "currentMode $currentMode"
+//      def cmds = []
+//    // log.debug("currentMode is $currentMode")
+//     if (currentMode == "off"){
+//         def nextMode = "heat"
+//         sendEvent(name: "thermostatMode", value: "heat")
+//         sendEvent(name: "thermostatOperatingState", value: "heating")
 
-    def currentMode = device.currentState("thermostatMode")?.value
-    if (!currentMode)
-    {
-        currentMode = "off"
-    }
-    log.debug "currentMode $currentMode"
-     def cmds = []
-   // log.debug("currentMode is $currentMode")
-    if (currentMode == "off"){
-        def nextMode = "heat"
-        sendEvent(name: "thermostatMode", value: "heat")
-        sendEvent(name: "thermostatOperatingState", value: "heating")
+//         cmds << zwave.thermostatModeV2.thermostatModeSet(mode: 1)
+//         cmds << zwave.thermostatModeV2.thermostatModeGet()
+//         encapSequence(cmds, 650)
+//         poll()
+//     }
+//     else if (currentMode == "heat"){
+//         def nextMode = "energySaveHeat"
+//         sendEvent(name: "thermostatMode", value: "energySaveHeat")
+//         sendEvent(name: "thermostatOperatingState", value: "energySaveHeat")
+//         cmds << zwave.thermostatModeV2.thermostatModeSet(mode: 11)
+//         cmds << zwave.thermostatModeV2.thermostatModeGet()
+//         encapSequence(cmds, 650)
+//         poll()
+//     }
+//     else if (currentMode == "energySaveHeat"){
+//         def nextMode = "off"
+//         sendEvent(name: "thermostatMode", value: "off")
+//         sendEvent(name: "thermostatOperatingState", value: "idle")
+//         cmds << zwave.thermostatModeV2.thermostatModeSet(mode: 11)
+//         cmds << zwave.thermostatModeV2.thermostatModeGet()
+//         encapSequence(cmds, 650)
+//         poll()
+//     }
+// }
 
-        cmds << zwave.thermostatModeV2.thermostatModeSet(mode: 1)
-        cmds << zwave.thermostatModeV2.thermostatModeGet()
-        encapSequence(cmds, 650)
-        poll()
-    }
-    else if (currentMode == "heat"){
-        def nextMode = "energySaveHeat"
-        sendEvent(name: "thermostatMode", value: "energySaveHeat")
-        sendEvent(name: "thermostatOperatingState", value: "energySaveHeat")
-        cmds << zwave.thermostatModeV2.thermostatModeSet(mode: 11)
-        cmds << zwave.thermostatModeV2.thermostatModeGet()
-        encapSequence(cmds, 650)
-        poll()
-    }
-    else if (currentMode == "energySaveHeat"){
-        def nextMode = "off"
-        sendEvent(name: "thermostatMode", value: "off")
-        sendEvent(name: "thermostatOperatingState", value: "idle")
-        cmds << zwave.thermostatModeV2.thermostatModeSet(mode: 11)
-        cmds << zwave.thermostatModeV2.thermostatModeGet()
-        encapSequence(cmds, 650)
-        poll()
-    }
-}
-
-def switchToMode(nextMode) {
-    def supportedModes = getDataByName("supportedModes")
-    if(supportedModes && !supportedModes.contains(nextMode)) log.warn "thermostat mode '$nextMode' is not supported"
-    if (nextMode in modes()) {
-        state.lastTriedMode = nextMode
-        "$nextMode"()
-    } else {
-        log.debug("no mode method '$nextMode'")
-    }
-}
-def getDataByName(String name) {
-    state[name] ?: device.getDataValue(name)
-}
+// def switchToMode(nextMode) {
+//     def supportedModes = getDataByName("supportedModes")
+//     if(supportedModes && !supportedModes.contains(nextMode)) log.warn "thermostat mode '$nextMode' is not supported"
+//     if (nextMode in modes()) {
+//         state.lastTriedMode = nextMode
+//         "$nextMode"()
+//     } else {
+//         log.debug("no mode method '$nextMode'")
+//     }
+// }
+// def getDataByName(String name) {
+//     state[name] ?: device.getDataValue(name)
+// }
 
 def getModeMap() { [
     "off": 0,
@@ -492,53 +509,73 @@ def getModeMap() { [
     "energySaveHeat": 11
 ]}
 
-def setThermostatMode(String value) {
-     def cmds = []
-    cmds << zwave.thermostatModeV2.thermostatModeSet(mode: modeMap[value])
+
+
+def setThermostatMode(String value)
+{
+    logging("${device.displayName} - setThermostatMode($value): mode=${getModeMap()[value]}")
+    def cmds = []
+    cmds << zwave.thermostatModeV2.thermostatModeSet(mode: getModeMap()[value])
     cmds << zwave.thermostatModeV2.thermostatModeGet()
     encapSequence(cmds, standardDelay)
-}
+} // end setThermostatMode()
 
-def off() {
-     def cmds = []
-    cmds << zwave.thermostatModeV2.thermostatModeSet(mode: 0)
-    cmds << zwave.thermostatModeV2.thermostatModeGet()
-    encapSequence(cmds, 650)
-    delayBetween([
-        sendEvent(name: "thermostatMode", value: "off"),
-        sendEvent(name: "thermostatOperatingState", value: "idle"),
-        poll()], 650)
 
-}
 
-def heat() {
-     def cmds = []
-    cmds << zwave.thermostatModeV2.thermostatModeSet(mode: 1)
-    cmds << zwave.thermostatModeV2.thermostatModeGet()
-    encapSequence(cmds, 650)
-    delayBetween([
-        sendEvent(name: "thermostatMode", value: "heat"),
-        sendEvent(name: "thermostatOperatingState", value: "heating"),
-        poll()], 650)
-}
+def off()
+{
+    setThermostatMode("off")
+    // def cmds = []
+    // cmds << zwave.thermostatModeV2.thermostatModeSet(mode: 0)
+    // cmds << zwave.thermostatModeV2.thermostatModeGet()
+    // encapSequence(cmds, 650)
+    // delayBetween([
+    //     sendEvent(name: "thermostatMode", value: "off"),
+    //     sendEvent(name: "thermostatOperatingState", value: "idle"),
+    //     poll()], 650)
+} // end off()
 
-def energySaveHeat() {
-     def cmds = []
-    cmds << zwave.thermostatModeV2.thermostatModeSet(mode: 11)
-    cmds << zwave.thermostatModeV2.thermostatModeGet()
-    encapSequence(cmds, 650)
-    delayBetween([
-        sendEvent(name: "thermostatMode", value: "energySaveHeat"),
-        sendEvent(name: "thermostatOperatingState", value: "energySaveHeat"),
-        poll()], 650)
-}
 
-def auto() {
-     def cmds = []
-    cmds << zwave.thermostatModeV2.thermostatModeSet(mode: 3)
-    cmds << zwave.thermostatModeV2.thermostatModeGet()
-    encapSequence(cmds, standardDelay)
-}
+
+def heat()
+{
+    setThermostatMode("heat")
+    // def cmds = []
+    // cmds << zwave.thermostatModeV2.thermostatModeSet(mode: 1)
+    // cmds << zwave.thermostatModeV2.thermostatModeGet()
+    // encapSequence(cmds, 650)
+    // delayBetween([
+    //     sendEvent(name: "thermostatMode", value: "heat"),
+    //     sendEvent(name: "thermostatOperatingState", value: "heating"),
+    //     poll()], 650)
+} // end heat()
+
+
+
+def energySaveHeat()
+{
+    setThermostatMode("energySaveHeat")
+    // def cmds = []
+    // cmds << zwave.thermostatModeV2.thermostatModeSet(mode: 11)
+    // cmds << zwave.thermostatModeV2.thermostatModeGet()
+    // encapSequence(cmds, 650)
+    // delayBetween([
+    //     sendEvent(name: "thermostatMode", value: "energySaveHeat"),
+    //     sendEvent(name: "thermostatOperatingState", value: "energySaveHeat"),
+    //     poll()], 650)
+} // end energySaveHeat()
+
+
+
+// def auto() {
+//      def cmds = []
+//     cmds << zwave.thermostatModeV2.thermostatModeSet(mode: 3)
+//     cmds << zwave.thermostatModeV2.thermostatModeGet()
+//     encapSequence(cmds, standardDelay)
+// }
+
+
+
 
 private getStandardDelay() {
     1000
@@ -615,13 +652,13 @@ private syncNext()
     {
         def keyState = state."$param.key"
 
-        if (keyState != null && keyState.value != null && keyState.state in ["notSynced", "inProgress"])
+        if (keyState != null && keyState.value != null && keyState.state in ["notSynced", "inProgress", "incorrect"])
         {
             multiStatusEvent("Sync in progress. (param: ${param.num})", true)
             keyState.state = "inProgress"
             keyState.scale = param.scale
             def value = keyState.value as double
-            logging("syncNext: Updating $param.key - value=${value} (parameter number $param.num) since state is $keyState.state", "info")
+            logging("syncNext: Updating $param.key to $value (parameter number $param.num) since state is $keyState.state", "info")
 
             cmds << response(encap(zwave.configurationV2.configurationSet(configurationValue: numberToParam(value, param.size, param.scale), parameterNumber: param.num, size: param.size)))
             cmds << response(encap(zwave.configurationV2.configurationGet(parameterNumber: param.num)))
@@ -648,20 +685,19 @@ private syncNext()
                 cmds << response(encap(zwave.multiChannelAssociationV2.multiChannelAssociationSet(groupingIdentifier: sensor, nodeId:[zwaveHubNodeId])))
                 cmds << response(encap(zwave.associationV2.associationSet(groupingIdentifier: sensor, nodeId:[zwaveHubNodeId])))
             }
-            break
+            break // Break out of the loop, thereby sending update for just one parameter
         }
     }
 
     if (cmds)
     {
-        runIn(10, "syncCheck")
         //logging ("syncNext: cmds!", "debug")
         cmds.each
         {
-            //sendHubCommand(it, 1000)
             logging("syncNext: Sending command $it", "info")
             sendHubCommand(it)
         }
+        runIn(10, "syncCheck")
     }
     else
     {
@@ -688,7 +724,7 @@ private List numberToParam(double value, Integer size = 1, Integer scale = 1)
 
 private syncCheck()
 {
-    logging("${device.displayName} - Executing syncCheck()","info")
+    logging("${device.displayName} - Executing syncCheck()", "info")
     def failed = []
     def incorrect = []
     def notSynced = []
@@ -735,7 +771,8 @@ private multiStatusEvent(String statusValue, boolean force = false, boolean disp
 
 def zwaveEvent(hubitat.zwave.commands.configurationv2.ConfigurationReport cmd)
 {
-    logging("${device.displayName} - Received command $cmd)", "info")
+    logging("${device.displayName} - ConfigurationReport: $cmd", "info")
+    //logging("ConfigurationReport: ${device.displayName} - cmd.parameterNumber: ${cmd.parameterNumber}")
     def paramKey = parameterMap().find( {it.num == cmd.parameterNumber } ).key
     def keyState = state."$paramKey"
     if (keyState == null)
@@ -749,7 +786,8 @@ def zwaveEvent(hubitat.zwave.commands.configurationv2.ConfigurationReport cmd)
     }
     def scaledValue = value * scale as long
     keyState.state = (scaledValue == cmd.scaledConfigurationValue) ? "synced" : "incorrect"
-    logging("${device.displayName} - Parameter ${paramKey} value is ${cmd.scaledConfigurationValue} expected $scaledValue (state became $keyState.state)", "info")
+    logging("${device.displayName} - Parameter ${paramKey} reported set to ${cmd.scaledConfigurationValue} expected $scaledValue (state became $keyState.state)", "info")
+
     syncNext()
 } // end zwaveEvent()
 
@@ -872,7 +910,28 @@ private secureCmd(cmd) {
 
 
 private Map cmdVersions() {
-    [0x85: 2, 0x59: 1, 0x8E: 2, 0x86: 3, 0x70: 2, 0x72: 2, 0x5E: 2, 0x5A: 1, 0x73: 1, 0x7A: 4, 0x60: 3, 0x20: 1, 0x6C: 1, 0x31: 5, 0x43: 2, 0x40: 2, 0x98: 1, 0x9F: 1, 0x25: 1]
+    [
+        0x20: 2,    // COMMAND_CLASS_BASIC
+        0x25: 1,    // COMMAND_CLASS_SWITCH_BINARY
+        0x31: 5,    // COMMAND_CLASS_SENSOR_MULTILEVEL
+        0x32: 3,    // COMMAND_CLASS_METER
+        0x40: 3,    // COMMAND_CLASS_THERMOSTAT_MODE
+        0x43: 3,    // COMMAND_CLASS_THERMOSTAT_SETPOINT
+        0x59: 1,    // COMMAND_CLASS_ASSOCIATION_GRP_INFO
+        0x5A: 1,    // COMMAND_CLASS_DEVICE_RESET_LOCALLY
+        0x5E: 2,    // COMMAND_CLASS_ZWAVEPLUS_INFO
+        0x60: 4,    // COMMAND_CLASS_MULTI_CHANNEL
+        0x6C: 1,    // COMMAND_CLASS_SUPERVISION (???)
+        0x70: 3,    // COMMAND_CLASS_CONFIGURATION
+        0x72: 2,    // COMMAND_CLASS_MANUFACTURER_SPECIFIC
+        0x73: 1,    // COMMAND_CLASS_POWERLEVEL
+        0x7A: 4,    // COMMAND_CLASS_FIRMWARE_UPDATE_MD
+        0x85: 3,    // COMMAND_CLASS_ASSOCIATION
+        0x86: 3,    // COMMAND_CLASS_VERSION
+        0x8E: 2,    // COMMAND_CLASS_MULTI_CHANNEL_ASSOCIATION_V2
+        0x98: 1,    // COMMAND_CLASS_SECURITY
+        0x9F: 1     // ???
+    ]
 }
 
 private parameterMap() {[
@@ -881,14 +940,14 @@ private parameterMap() {[
         1: "Heating mode",
         2: "Cooling mode (not implemented)",
         11: "Energy saving heating mode"
-    ], def: "1", title: "Sensor Mode",
+    ], def: "0", title: "Operation Mode",
      descr: "This parameter determines the operation mode of the thermostat", scale: 1],
 
     [key: "sensorMode", num: 2, size: 1, type: "enum", options: [
         0: "F - Floor sensor mode. (Default)",
         3: "A2 - External room sensor mode",
         4: "A2F - External sensor with floor limitation"
-    ], def: "1", title: "Sensor Mode",
+    ], def: "0", title: "Sensor Mode",
      descr: "This parameter determines what kind of sensor is used to regulate the power", scale: 1],
 
     [key: "floorSensorType", num: 3, size: 1, type: "enum", options: [
@@ -934,7 +993,7 @@ private parameterMap() {[
     [key: "tempDisplay", num: 14, size: 1, type: "enum", options: [
         0: "Display setpoint temperature (Default)",
         1: "Display measured temperature"
-    ], def: "0", title: "Temperature Display",
+    ], def: 0, title: "Temperature Display",
      descr: "Selects which temperature is shown in the display", scale: 1],
 
     [key: "DimBtnBright", num: 15, size: 1, type: "number", def:50, min: 0, max: 100, title: "Button brightness – dimmed state (%)",
