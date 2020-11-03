@@ -61,6 +61,7 @@ metadata {
         capability "Thermostat Mode"
         capability "Thermostat Heating Setpoint"
         capability "Thermostat Setpoint"
+        capability "ThermostatOperatingState"
         capability "Configuration"
         capability "Polling"
         capability "Sensor"
@@ -143,16 +144,16 @@ private removeChildDevices() {
 
 
 
-def zwaveEvent(hubitat.zwave.commands.multichannelv3.MultiChannelEndPointReport cmd) {
-    log.debug "multichannelv3.MultiChannelCapabilityReport: ${cmd}"
+def zwaveEvent(hubitat.zwave.commands.multichannelv4.MultiChannelEndPointReport cmd) {
+    log.debug "${device.displayName} - multichannelv4.MultiChannelCapabilityReport: ${cmd}"
 }
 
 
-def zwaveEvent(hubitat.zwave.commands.multichannelv3.MultiChannelCmdEncap cmd) {
+def zwaveEvent(hubitat.zwave.commands.multichannelv4.MultiChannelCmdEncap cmd) {
     log.debug "${device.displayName} - MultiChannelCmdEncap ${cmd}"
 
-    def encapsulatedCommand = cmd.encapsulatedCommand(commandClassCapabilities)
-    //def encapsulatedCommand = cmd.encapsulatedCommand(cmdVersions())
+    //def encapsulatedCommand = cmd.encapsulatedCommand(commandClassCapabilities)
+    def encapsulatedCommand = cmd.encapsulatedCommand(cmdVersions())
     if (encapsulatedCommand) {
         log.debug "${device.displayName} - Got encapsulated ${encapsulatedCommand}"
         zwaveEvent(encapsulatedCommand/*, cmd.sourceEndPoint as Integer*/)
@@ -205,13 +206,13 @@ def zwaveEvent(hubitat.zwave.commands.meterv3.MeterReport cmd)
 def zwaveEvent(hubitat.zwave.commands.sensormultilevelv5.SensorMultilevelReport cmd)
 {
     log.debug("${device.displayName} - Temperature is: $cmd.scaledSensorValue °C")
-    sendEvent(name: "temperature", value: cmd.scaledSensorValue)
+    sendEvent([name: "temperature", value: cmd.scaledSensorValue])
 }
 
 
 def zwaveEvent(hubitat.zwave.commands.thermostatoperatingstatev2.ThermostatOperatingStateReport cmd)
 {
-    log.debug("operating rep: $cmd")
+    log.debug("ThermostatOperatingStateReport: $cmd")
     def map = [:]
     switch (cmd.operatingState) {
         case hubitat.zwave.commands.thermostatoperatingstatev1.ThermostatOperatingStateReport.OPERATING_STATE_IDLE:
@@ -504,9 +505,12 @@ def supportedThermostatModes() {
 // }
 
 def getModeMap() { [
+    "auto": 0,
     "off": 0,
     "heat": 1,
-    "energySaveHeat": 11
+    "emergency heat": 11,
+    "energySaveHeat": 11,
+    "cool": 0,
 ]}
 
 
